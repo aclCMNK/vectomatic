@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basic HTML Page</title>
+    <style>
+        body {
+        }
+        #app {
+        }
+    </style>
+</head>
+<body>
+    <p id="debug"></p>
+    <div id="app"></div>
+    <script>
+        function load_scripts(...scripts) {
+            const total = scripts.length; 
+            let head = 0;
+            return new Promise(resolve => {
+                const load = (src) => {
+                    const script = document.createElement('script');
+                    script.src =`${scripts[head]}?${Math.ceil(Math.random() * Date.now())}`;
+                    document.body.appendChild(script);
+                    script.onload = () => {
+                        if (head === total - 1) {
+                            resolve();
+                            return;
+                        }else{
+                            load(scripts[++head]);
+                        }
+                    }
+                }
+                load(scripts[head]);
+            });
+        }
+        load_scripts("../../src/svg_engine.js", "./scripts.js").then(_ => {
+            const app = new App({
+                root: "#app",
+                bgcolor: "#2f343d"
+            });
+        });
+    </script>
+</body>
+</html>
