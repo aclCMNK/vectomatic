@@ -17,7 +17,7 @@ function SVG_Engine(props) {
         }
     }
     const Vector2D = {
-        new: (x, y) => {
+        new: (x = 0, y = 0) => {
             return { x, y };
         },
         scale: (v, s) => {
@@ -36,6 +36,71 @@ function SVG_Engine(props) {
             return { x: v1.x / v2.x, y: v1.y / v2.y };
         }
     };
+    const Rect2D = {
+        new: (x = 0, y = 0, w = 0, h = 0) => {
+            return { left: x, top: y, right: w, bottom: h, coord: Point2D.new(x, y), size: Point2D.new(w, h) };
+        },
+        set_coord: (rect, x, y) => {
+            rect.left = x;
+            rect.top = y;
+            rect.coord = Point2D.new(x, y);
+        },
+        set_size: (rect, w, h) => {
+            rect.right = w;
+            rect.bottom = h;
+            rect.size = Point2D.new(w, h);
+        }
+    }
+    const Matrix2D = {
+        new: (
+            a = 0, b = 0, u = 0,
+            c = 0, d = 0, v = 0,
+            e = 0, f = 0, w = 1
+        ) => {
+            return {
+                a, b, u,
+                c, d, v,
+                e, f, w
+            };
+        },
+        translation: (x = 0, y = 0) => {
+            return {
+                a: 1, b: 0, u: 0,
+                c: 0, d: 1, v: 0,
+                e: x, f: y, w: 1
+            };
+        },
+        translationVec: (vector) => {
+            vector = vector || Vector2D.new(0, 0);
+            return Matrix2D.translation(vector.x, vector.y);
+        },
+        rotation: (radians) => {
+            const cos = Math.cos(radians);
+            const sin = Math.sin(radians);
+            return {
+                a: cos, b: -sin, u: 0,
+                c: sin, d: cos, v: 0,
+                e: 0, f: 0, w: 1
+            };
+        },
+        rotationVec: (radians, vector) => {
+            vector = vector || Vector2D.new(0, 0);
+            const cos = Math.cos(radians);
+            const sin = Math.sin(radians);
+            const new_mat = Matrix.new(
+                vector.x * cos - vector.y * sin, 0,
+                vector.x * sin + vector.y * cos,
+            );
+            return new_mat;
+        },
+        scale: (s) => {
+            return {
+                a: s, b: 0, u: 0,
+                c: 0, d: s, v: 0,
+                e: 0, f: 0, w: 1
+            };
+        }
+    }
     //-------------------------------
     // GLOBAL METHODS
     //-------------------------------
@@ -43,18 +108,23 @@ function SVG_Engine(props) {
         if (!el) return;
         _events.push({ el, event, cback });
     }
+    const add_child = (parent, child) => {
+        if (!parent || !child) return;
+        parent.appendChild(child);
+    }
     //-------------------------------
     // SVG ELEMENTS
     //-------------------------------
     const new_scene = (parent, opts = {}) => {
         if (!parent) return;
-        console.log(opts)
         const svg = document.createElementNS(__SVG_URL, "svg");
         svg.setAttributeNS(null, "width", opts.w || 1200);
         svg.setAttributeNS(null, "height", opts.w || 900);
         svg.style.backgroundColor = opts.bg || "#fff";
         parent.appendChild(svg);
-        return svg;
+        const root = new_group();
+        svg.appendChild(root);
+        return { svg, root };
     };
     const dragdrop = (el, down_cback, move_cback, parent_move_cback, up_cback, leave_cback) => {
         let is_dragging = false;
@@ -63,8 +133,11 @@ function SVG_Engine(props) {
         }
         el.onmousedown = (e) => {
             is_dragging = true;
-            const init_x = parseFloat(el.getAttributeNS(null, "cx"));
-            const init_y = parseFloat(el.getAttributeNS(null, "cy"));
+            const matrix = el.getCTM();
+            const cx = matrix.e;
+            const cy = matrix.f;
+            const init_x = parseFloat(cx);
+            const init_y = parseFloat(cy);
             const init_pos = Vector2D.new(init_x, init_y);
             const mouse_pos = Vector2D.new(e.clientX, e.clientY);
             if (typeof down_cback === "function") down_cback(e);
@@ -73,8 +146,6 @@ function SVG_Engine(props) {
                 const mouse = Vector2D.new(e.clientX, e.clientY);
                 const diff = Vector2D.diff(mouse, mouse_pos);
                 const final_pos = Vector2D.add(init_pos, diff);
-                el.setAttributeNS(null, "cx", final_pos.x);
-                el.setAttributeNS(null, "cy", final_pos.y);
                 if (typeof parent_move_cback === "function") {
                     e.final_pos = final_pos;
                     parent_move_cback(e);
@@ -82,17 +153,17 @@ function SVG_Engine(props) {
             }
         }
         el.onmouseleave = (e) => {
-            parent.onmousemove = null;
+            el.parentNode.onmousemove = null;
             is_dragging = false;
             if (typeof leave_cback === "function") leave_cback(e);
         }
         el.onmouseup = (e) => {
-            parent.onmousemove = null;
+            el.parentNode.onmousemove = null;
             is_dragging = false;
             if (typeof up_cback === "function") up_cback(e);
         }
     }
-    const new_line = (parent, p1, p2, opts = {}) => {
+    const new_line = (p1, p2, opts = {}) => {
         if (!parent) return;
         const line = document.createElementNS(__SVG_URL, "line");
         line.set_p1 = (p1) => {
@@ -107,10 +178,9 @@ function SVG_Engine(props) {
         line.set_p2(p2);
         line.setAttributeNS(null, "stroke", opts.color || "#000");
         line.setAttributeNS(null, "stroke-width", opts.width || 1);
-        parent.appendChild(line);
         return line;
     }
-    const new_polyline = (parent, opts = {}, ...points) => {
+    const new_polyline = (opts = {}, ...points) => {
         if (!parent) return;
         const line = document.createElementNS(__SVG_URL, "polyline");
         line.set_points = (...points) => {
@@ -140,10 +210,9 @@ function SVG_Engine(props) {
         line.setAttributeNS(null, "stroke", opts.color || "#000");
         line.setAttributeNS(null, "stroke-width", opts.width || 1);
         line.setAttributeNS(null, "fill", opts.fill || 1);
-        parent.appendChild(line);
         return line;
     }
-    const new_path = (parent, opts = {}) => {
+    const new_path = (opts = {}) => {
         if (!parent) return;
         const line = document.createElementNS(__SVG_URL, "path");
         line.clear = () => {
@@ -254,10 +323,9 @@ function SVG_Engine(props) {
         line.setAttributeNS(null, "stroke", opts.color || "#000");
         line.setAttributeNS(null, "stroke-width", opts.width || 1);
         line.setAttributeNS(null, "fill", opts.fill || 1);
-        parent.appendChild(line);
         return line;
     }
-    const new_circle = (parent, center, radius, opts = {}) => {
+    const new_circle = (center, radius, opts = {}) => {
         const circle = document.createElementNS(__SVG_URL, "circle");
         circle.setAttributeNS(null, "cx", center.x);
         circle.setAttributeNS(null, "cy", center.y);
@@ -265,21 +333,136 @@ function SVG_Engine(props) {
         circle.setAttributeNS(null, "stroke", opts.border_color || "#000");
         circle.setAttributeNS(null, "stroke-width", opts.border || 0);
         circle.setAttributeNS(null, "fill", opts.color || "#000");
-        circle.dragdrop = (cback) => {
-            const radius_offset = 20;
-            dragdrop(circle, () => {
+        circle.dragdrop = (evs) => {
+            dragdrop(circle, (e) => {
+                if (typeof evs.onPress === "function") evs.onPress(e);
             }, (e) => {
                 circle.setAttributeNS(null, "r", radius + radius_offset);
+                if (typeof evs.onHover === "function") evs.onHover(e);
             }, (e) => {
                 circle.setAttributeNS(null, "cx", e.final_pos.x);
                 circle.setAttributeNS(null, "cy", e.final_pos.y);
-                if(typeof cback === "function") cback(e);
+                if (typeof evs.onMove === "function") evs.onMove(e);
+            }, (e) => {
+                if (typeof evs.onUp === "function") evs.onUp(e);
             }, (e) => {
                 circle.setAttributeNS(null, "r", radius);
-            }, (e) => { });
+                if (typeof evs.onLeave === "function") evs.onLeave(e);
+            });
+
         };
-        parent.appendChild(circle);
         return circle;
+    }
+    const new_rect = (p1, p2, opts = {}) => {
+        const rect = document.createElementNS(__SVG_URL, "rect");
+        rect.setAttributeNS(null, "x", p1.x);
+        rect.setAttributeNS(null, "y", p1.y);
+        rect.setAttributeNS(null, "rx", p1.radius || 0);
+        rect.setAttributeNS(null, "width", p2.x - p1.x);
+        rect.setAttributeNS(null, "height", p2.y - p1.y);
+        rect.setAttributeNS(null, "stroke", opts.border_color || "#000");
+        rect.setAttributeNS(null, "stroke-width", opts.border || 0);
+        rect.setAttributeNS(null, "fill", opts.color || "#000");
+        rect.dragdrop = (evs) => {
+            dragdrop(rect, (e) => {
+                if (typeof evs.onPress === "function") evs.onPress(e);
+            }, (e) => {
+                if (typeof evs.onHover === "function") evs.onHover(e);
+            }, (e) => {
+                if (typeof evs.onMove === "function") evs.onMove(e);
+            }, (e) => {
+                if (typeof evs.onUp === "function") evs.onUp(e);
+            }, (e) => {
+                if (typeof evs.onLeave === "function") evs.onLeave(e);
+            });
+
+        };
+        return rect;
+    };
+    const new_image = (src, pos, w, h, opts = {}) => {
+        const img = document.createElementNS(__SVG_URL, "image");
+        img.setAttributeNS(null, "href", src);
+        img.setAttributeNS(null, "x", pos.x);
+        img.setAttributeNS(null, "y", pos.y);
+        img.setAttributeNS(null, "width", w);
+        img.setAttributeNS(null, "height", h);
+        img.dragdrop = (evs) => {
+            dragdrop(img, (e) => {
+                if (typeof evs.onPress === "function") evs.onPress(e);
+            }, (e) => {
+                if (typeof evs.onHover === "function") evs.onHover(e);
+            }, (e) => {
+                if (typeof evs.onMove === "function") evs.onMove(e);
+            }, (e) => {
+                if (typeof evs.onUp === "function") evs.onUp(e);
+            }, (e) => {
+                if (typeof evs.onLeave === "function") evs.onLeave(e);
+            });
+
+        };
+        return img;
+    }
+    const new_text = (text, pos, opts = {}) => {
+        const text_node = document.createElementNS(__SVG_URL, "text");
+        text_node.setAttributeNS(null, "x", pos.x);
+        text_node.setAttributeNS(null, "y", pos.y);
+        text_node.setAttributeNS(null, "fill", opts.color || "#000");
+        text_node.setAttributeNS(null, "style", `font-size: ${opts.size || 12}px; font-family: ${opts.font || "Arial"}`);
+        text_node.textContent = text;
+        text_node.dragdrop = (evs) => {
+            dragdrop(text_node, (e) => {
+                if (typeof evs.onPress === "function") evs.onPress(e);
+            }, (e) => {
+                if (typeof evs.onHover === "function") evs.onHover(e);
+            }, (e) => {
+                if (typeof evs.onMove === "function") evs.onMove(e);
+            }, (e) => {
+                if (typeof evs.onUp === "function") evs.onUp(e);
+            }, (e) => {
+                if (typeof evs.onLeave === "function") evs.onLeave(e);
+            });
+
+        };
+        return text_node;
+    }
+    const new_group = (opts = {}) => {
+        const g = document.createElementNS(__SVG_URL, "g");
+        let transform = "";
+        if (opts.radians) {
+            opts.pivot = opts.pivot || Point2D.new();
+            transform += `rotate(${opts.radians} ${opts.pivot.x} ${opts.pivot.y})`;
+        }
+        if (opts.pos) {
+            opts.pos = opts.pos || Point2D.new();
+            transform += `translate(${opts.pos.x || 0},${opts.pos.y || 0})`;
+        }
+        if (opts.scale) {
+            transform += `scale(${opts.scale})`;
+        }
+        if (transform.trim() !== "") {
+            g.setAttributeNS(null, "transform", transform);
+        }
+        g.dragdrop = (evs) => {
+            dragdrop(g, (e) => {
+                if (typeof evs.onPress === "function") evs.onPress(e);
+            }, (e) => {
+                if (typeof evs.onHover === "function") evs.onHover(e);
+            }, (e) => {
+                if (typeof evs.onMove === "function") evs.onMove(e);
+            }, (e) => {
+                if (typeof evs.onUp === "function") evs.onUp(e);
+            }, (e) => {
+                if (typeof evs.onLeave === "function") evs.onLeave(e);
+            });
+
+        };
+        return g;
+    }
+    const str2group = (opts) => {
+        if (!opts.inner) return;
+        const g = new_group(opts);
+        g.innerHTML = opts.inner;
+        return g;
     }
     const loop = (cback) => {
         window.requestAnimationFrame(async (dt) => {
@@ -303,10 +486,18 @@ function SVG_Engine(props) {
     const __public = {
         Point2D,
         Vector2D,
+        Rect2D,
+        Matrix2D,
+        add_child,
         new_scene,
+        new_group,
+        str2group,
         new_line,
         new_path,
         new_circle,
+        new_rect,
+        new_image,
+        new_text,
         loop,
     };
     return __public;
